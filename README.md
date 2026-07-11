@@ -1,13 +1,14 @@
 # Huawei B715 Gateway
 
-Bramka HTTP nad routerem LTE **Huawei B715s-23c** (i pokrewnych) — tłumaczy zamknięte API
-routera na Prometheus i czysty REST. Oparta na bibliotece
-[`huawei-lte-api`](https://github.com/Salamek/huawei-lte-api).
+Bramka HTTP do routera LTE **Huawei B715s** (i pokrewnych) — jest warstwą pośredniczącą pomiędzy zamkniętym API
+routera na czysty REST oraz format Prometheus. Oparta na bibliotece [`huawei-lte-api`](https://github.com/Salamek/huawei-lte-api).
 
-Jeden proces Pythona wystawia serwer HTTP, który:
+Główny proces (`gateway.py`) wystawia serwer HTTP, który:
 - **monitoruje** — `/metrics` z metrykami Prometheus (sygnał, agregacja, ruch, SMS, status, operator),
-- **zarządza** — REST API do SMS-ów (lista, oznaczanie jako przeczytane, usuwanie),
-- **stroi** — narzędzie do blokady pasm LTE (`scripts/set_band.py`).
+- **zarządza** — REST API do SMS-ów (lista, oznaczanie jako przeczytane, usuwanie).
+
+Niezależnie od usługi, w katalogu `scripts/` są osobne narzędzia uruchamiane ręcznie lub z crona:
+blokada pasm LTE, masowe operacje na SMS-ach oraz przekazywanie SMS-ów do Pushover.
 
 ## Zawartość projektu
 
@@ -16,9 +17,9 @@ Jeden proces Pythona wystawia serwer HTTP, który:
 | `gateway.py` | Główny serwer: bramka HTTP (Prometheus + REST API SMS) |
 | `requirements.txt` | Zależności Pythona |
 | `.env.example` | Szablon konfiguracji |
-| `scripts/` | Skrypty jednorazowe (uruchamiane ręcznie, poza usługą) |
+| `scripts/` | Niezależne narzędzia (uruchamiane poza usługą — ręcznie lub z crona) |
 
-### `scripts/` — narzędzia one-shot
+### `scripts/` — narzędzia pomocnicze
 
 | Skrypt | Opis |
 |--------|------|
