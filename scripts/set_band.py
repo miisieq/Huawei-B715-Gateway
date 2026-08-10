@@ -20,7 +20,8 @@ Uruchomienie:
 Konfiguracja przez .env (katalog projektu): ROUTER_USER, ROUTER_PASS, ROUTER_IP (wymagane).
 """
 
-from __future__ import annotations  # `str | None` w adnotacjach działa też na Pythonie 3.9
+# dzięki temu `str | None` w adnotacjach działa też na Pythonie 3.9
+from __future__ import annotations
 
 import os
 import sys
