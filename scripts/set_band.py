@@ -20,6 +20,8 @@ Uruchomienie:
 Konfiguracja przez .env (katalog projektu): ROUTER_USER, ROUTER_PASS, ROUTER_IP (wymagane).
 """
 
+from __future__ import annotations  # `str | None` w adnotacjach działa też na Pythonie 3.9
+
 import os
 import sys
 
@@ -34,14 +36,14 @@ USER = os.environ.get("ROUTER_USER")
 PASS = os.environ.get("ROUTER_PASS")
 ROUTER_IP = os.environ.get("ROUTER_IP")
 
-ALL_BANDS = "%X" % LTEBandEnum.ALL.value  # 7FFFFFFFFFFFFFFF
+ALL_BANDS = f"{LTEBandEnum.ALL.value:X}"  # 7FFFFFFFFFFFFFFF
 
 
 def build_url() -> str:
     return f"http://{USER}:{PASS}@{ROUTER_IP}/"
 
 
-def usage(current: str = None) -> None:
+def usage(current: str | None = None) -> None:
     print("Użycie: set_band.py <maska_hex | auto>", file=sys.stderr)
     print("  np. 1 (B1), 5 (B1+B3), 45 (B1+B3+B7), auto (wszystkie + tryb AUTO)", file=sys.stderr)
     if current is not None:

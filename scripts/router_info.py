@@ -110,7 +110,7 @@ def main() -> None:
                     read = "PRZECZYTANA" if msg.get("Smstat") == "1" else "NIEPRZECZYTANA"
                     print(f"\n  [{read}] od {msg.get('Phone')}  ({msg.get('Date')})")
                     print(f"      {msg.get('Content')}")
-        except Exception as exc:  # SMS zwykle wymaga zalogowania
+        except Exception as exc:  # noqa: BLE001 - SMS zwykle wymaga zalogowania
             print(f"  Nie udało się pobrać SMS-ów: {exc}")
             print("  (Ustaw ROUTER_USER i ROUTER_PASS – odczyt SMS wymaga logowania.)")
 

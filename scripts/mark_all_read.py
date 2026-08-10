@@ -81,7 +81,7 @@ def main() -> None:
             try:
                 client.sms.set_read(int(index))
                 ok += 1
-            except Exception as exc:  # pojedynczy błąd nie przerywa całości
+            except Exception as exc:  # noqa: BLE001 - pojedynczy błąd nie przerywa całości
                 errors.append((index, str(exc)))
             if i % 25 == 0 or i == len(unread):
                 print(f"  oznaczono {i}/{len(unread)}...")
