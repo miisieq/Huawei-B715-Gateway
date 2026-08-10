@@ -279,6 +279,23 @@ PUSHOVER_TOKEN=token_aplikacji_pushover
 PUSHOVER_USER=klucz_uzytkownika_pushover
 ```
 
+### Pomijanie wybranych nadawców (ignorelista)
+
+Opcjonalnie możesz wskazać nadawców, których wiadomości mają **nie** trafiać do Pushover
+(np. alerty RCB czy SMS-y marketingowe). Ustaw zmienną `SMS_IGNORE_SENDERS` — listę
+rozdzieloną przecinkami. Dopasowanie działa po polu `Phone` wiadomości, czyli po
+**numerze telefonu** albo — dla wiadomości bez numeru — po **nazwie nadawcy**
+(np. `ALERT RCB`). Wielkość liter nie ma znaczenia.
+
+```ini
+SMS_IGNORE_SENDERS=ALERT RCB
+# kilku nadawców naraz:
+# SMS_IGNORE_SENDERS=ALERT RCB,+48555111222,InfoSMS
+```
+
+Wiadomości od zignorowanych nadawców są oznaczane jako przeczytane (bez powiadomienia),
+żeby nie zapełniały skrzynki routera i nie były przetwarzane przy każdym uruchomieniu.
+
 Wpis w crontab (co 1 minutę, z blokadą przed nakładaniem się uruchomień):
 
 ```cron

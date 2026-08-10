@@ -14,6 +14,11 @@ Konfiguracja przez .env (katalog projektu) lub zmienne środowiskowe:
     ROUTER_USER, ROUTER_PASS, ROUTER_IP (wymagane)
     PUSHOVER_TOKEN   - token aplikacji Pushover
     PUSHOVER_USER    - klucz użytkownika (lub grupy) Pushover
+    SMS_IGNORE_SENDERS - opcjonalna lista nadawców do zignorowania (rozdzielona
+                       przecinkami). Dopasowanie po polu Phone SMS-a, czyli po
+                       numerze telefonu albo — dla wiadomości bez numeru
+                       (np. marketing) — po nazwie nadawcy. Bez rozróżniania
+                       wielkości liter. Przykład: SMS_IGNORE_SENDERS=ALERT RCB,111
 
 Uruchomienie:
     python3 scripts/sms_to_pushover.py            # z podsumowaniem na stdout
@@ -40,11 +45,28 @@ PUSHOVER_TOKEN = os.environ.get("PUSHOVER_TOKEN")
 PUSHOVER_USER = os.environ.get("PUSHOVER_USER")
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 
+
+def parse_ignore_senders(raw) -> set:
+    """Parsuje listę nadawców do zignorowania (rozdzieloną przecinkami) na zbiór
+    znormalizowanych wpisów (bez spacji na brzegach, bez rozróżniania wielkości liter)."""
+    if not raw:
+        return set()
+    return {part.strip().casefold() for part in raw.split(",") if part.strip()}
+
+
+# nadawcy do pominięcia — dopasowanie po polu Phone (numer albo nazwa nadawcy)
+IGNORE_SENDERS = parse_ignore_senders(os.environ.get("SMS_IGNORE_SENDERS"))
+
 SMSTAT_UNREAD = "0"  # "0" = nieprzeczytana, "1" = przeczytana (B715s)
 
 
 def build_url() -> str:
     return f"http://{USER}:{PASS}@{ROUTER_IP}/"
+
+
+def is_ignored(phone) -> bool:
+    """Czy nadawca (numer lub nazwa z pola Phone) jest na liście do zignorowania."""
+    return bool(phone) and phone.strip().casefold() in IGNORE_SENDERS
 
 
 def fetch_all_inbox(client: Client) -> list:
@@ -125,6 +147,7 @@ def main() -> None:
 
         sent = 0
         failed = 0
+        ignored = 0
         for msg in unread:
             index = int(msg.get("Index"))
             phone = msg.get("Phone") or "?"
@@ -132,6 +155,19 @@ def main() -> None:
             content = msg.get("Content") or ""
             title = f"SMS od {phone}"
             body = content  # data trafia do pola timestamp, nie do treści
+
+            # 0) nadawca na liście ignorowanych — nie powiadamiaj, tylko oznacz jako
+            #    przeczytany (żeby nie zapełniał skrzynki i nie był przetwarzany co uruchomienie)
+            if is_ignored(phone):
+                try:
+                    client.sms.set_read(index)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"Nie udało się oznaczyć zignorowanego Index {index} "
+                          f"jako przeczytany: {exc} — pomijam.", file=sys.stderr)
+                    failed += 1
+                    continue
+                ignored += 1
+                continue
 
             # 1) wyślij powiadomienie (timestamp = data odbioru SMS-a z API routera)
             try:
@@ -155,8 +191,9 @@ def main() -> None:
                 continue
             sent += 1
 
-        if (sent or failed) and not quiet:
-            print(f"Wysłano i oznaczono: {sent}; nieudane (do ponowienia): {failed}.")
+        if (sent or failed or ignored) and not quiet:
+            print(f"Wysłano i oznaczono: {sent}; zignorowano: {ignored}; "
+                  f"nieudane (do ponowienia): {failed}.")
 
 
 if __name__ == "__main__":
