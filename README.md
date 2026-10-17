@@ -7,7 +7,7 @@ Główny proces (`gateway.py`) wystawia serwer HTTP, który:
 - **monitoruje** — `/metrics` z metrykami Prometheus (sygnał, agregacja, ruch, SMS, status, operator),
 - **zarządza** — REST API do SMS-ów (lista, oznaczanie jako przeczytane, usuwanie).
 
-Niezależnie od usługi, w katalogu `scripts/` są osobne narzędzia uruchamiane ręcznie lub z crona:
+Niezależnie od usługi, w katalogu `scripts/` są osobne narzędzia uruchamiane ręcznie lub przez timer systemd:
 blokada pasm LTE, masowe operacje na SMS-ach oraz przekazywanie SMS-ów do Pushover.
 
 ## Zawartość projektu
@@ -17,7 +17,7 @@ blokada pasm LTE, masowe operacje na SMS-ach oraz przekazywanie SMS-ów do Pusho
 | `gateway.py` | Główny serwer: bramka HTTP (Prometheus + REST API SMS) |
 | `requirements.txt` | Zależności Pythona |
 | `.env.example` | Szablon konfiguracji |
-| `scripts/` | Niezależne narzędzia (uruchamiane poza usługą — ręcznie lub z crona) |
+| `scripts/` | Niezależne narzędzia (uruchamiane poza usługą — ręcznie lub przez timer systemd) |
 
 ### `scripts/` — narzędzia pomocnicze
 
@@ -27,7 +27,7 @@ blokada pasm LTE, masowe operacje na SMS-ach oraz przekazywanie SMS-ów do Pusho
 | `set_band.py` | Blokada pasm LTE (band lock); maskę podaje się jako argument |
 | `mark_all_read.py` | Oznacza wszystkie SMS-y jako przeczytane |
 | `delete_all_smses.py` | Usuwa wszystkie SMS-y (dry-run; kasuje z `--yes`) |
-| `sms_to_pushover.py` | Wysyła nieprzeczytane SMS-y jako powiadomienia Pushover (do crona) |
+| `sms_to_pushover.py` | Wysyła nieprzeczytane SMS-y jako powiadomienia Pushover (z timera systemd) |
 
 > Skrypty w `scripts/` ładują `.env` z katalogu projektu, więc można je uruchamiać z dowolnego miejsca.
 
@@ -56,7 +56,7 @@ Bez wchodzenia do katalogu projektu użyj pełnych ścieżek — konfiguracja `.
 /srv/huawei-b715-gateway/venv/bin/python /srv/huawei-b715-gateway/scripts/sms_to_pushover.py
 ```
 
-> `sms_to_pushover.py` jest zwykle uruchamiany z crona — patrz [Powiadomienia SMS → Pushover (cron)](#powiadomienia-sms--pushover-cron).
+> `sms_to_pushover.py` jest zwykle uruchamiany przez timer systemd — patrz [Powiadomienia SMS → Pushover (systemd timer)](#powiadomienia-sms--pushover-systemd-timer).
 
 ## Wymagania
 
@@ -261,7 +261,7 @@ server {
 }
 ```
 
-## Powiadomienia SMS → Pushover (cron)
+## Powiadomienia SMS → Pushover (systemd timer)
 
 `scripts/sms_to_pushover.py` pobiera nieprzeczytane SMS-y (od najstarszej), wysyła każdą
 jako powiadomienie [Pushover](https://pushover.net/api#messages) i **dopiero po potwierdzeniu**
@@ -296,13 +296,47 @@ SMS_IGNORE_SENDERS=ALERT RCB
 Wiadomości od zignorowanych nadawców są oznaczane jako przeczytane (bez powiadomienia),
 żeby nie zapełniały skrzynki routera i nie były przetwarzane przy każdym uruchomieniu.
 
-Wpis w crontab (co 1 minutę, z blokadą przed nakładaniem się uruchomień):
+Uruchamiane cyklicznie przez **timer systemd** (co 1 minutę). Dwa pliki:
 
-```cron
-* * * * * cd /srv/huawei-b715-gateway && flock -n /tmp/sms_pushover.lock ./venv/bin/python scripts/sms_to_pushover.py --quiet
+`/etc/systemd/system/sms-pushover.service`:
+
+```ini
+[Unit]
+Description=Przekazywanie nieprzeczytanych SMS do Pushover
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/huawei-b715-gateway
+ExecStart=/srv/huawei-b715-gateway/venv/bin/python scripts/sms_to_pushover.py --quiet
+TimeoutStartSec=60
+NoNewPrivileges=true
 ```
 
-Z flagą `--quiet` skrypt na sukces nie wypisuje nic — dzięki temu cron nie generuje żadnego wyjścia (a więc i maila). Ewentualne błędy trafiają na stderr i obsłuży je standardowo cron (np. mailem do właściciela crontaba). Bez `--quiet` na końcu pokazuje podsumowanie (`Wysłano i oznaczono: X; nieudane: Y`).
+`/etc/systemd/system/sms-pushover.timer`:
+
+```ini
+[Unit]
+Description=Uruchamiaj SMS->Pushover co minute
+
+[Timer]
+OnCalendar=*:0/1
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+```
+
+Włączenie i podgląd:
+
+```bash
+systemctl enable --now sms-pushover.timer
+systemctl list-timers sms-pushover.timer     # kiedy następny / ostatni przebieg
+journalctl -u sms-pushover -f                # logi + czas wykonania każdego przebiegu
+```
+
+`Type=oneshot` nie pozwala nałożyć się dwóm przebiegom (zastępuje `flock`), a `TimeoutStartSec=60` ubija ewentualny zwis (np. gdy router przestanie odpowiadać na żądanie bez timeoutu) — inaczej proces mógłby wisieć w nieskończoność, blokując kolejne uruchomienia. Z flagą `--quiet` skrypt na sukces nie wypisuje nic; bez niej pokazuje podsumowanie (`Wysłano i oznaczono: X; nieudane: Y`). Czas wykonania i exit code każdego przebiegu są w `journalctl -u sms-pushover`.
 
 ## Uwagi bezpieczeństwa
 
