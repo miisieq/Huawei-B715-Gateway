@@ -41,6 +41,25 @@ PASS = os.environ.get("ROUTER_PASS")
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "9101"))
 HTTP_ADDR = os.environ.get("HTTP_ADDR", "0.0.0.0")
 
+
+# Limity czasu połączenia z routerem (sekundy, float). connect ~3 s kończy scrape na
+# pierwszym żądaniu, gdy router nie przyjmuje połączeń (z zapasem do 10 s scrape_timeout);
+# przy działającym routerze (scrape ~1–3 s) limit się nie odpala.
+def router_timeout() -> tuple:
+    def _parse(name: str, default: str) -> float:
+        raw = os.environ.get(name, default)
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            raise SystemExit(f"[config] {name} musi być liczbą, jest: {raw!r}")
+        if val <= 0:
+            raise SystemExit(f"[config] {name} musi być > 0, jest: {val}")
+        return val
+    return (_parse("ROUTER_CONNECT_TIMEOUT", "3"), _parse("ROUTER_READ_TIMEOUT", "5"))
+
+
+ROUTER_TIMEOUT = router_timeout()
+
 # Smstat: "0" = nieprzeczytana, "1" = przeczytana (zweryfikowane na B715s)
 SMSTAT_READ = "1"
 
@@ -164,7 +183,7 @@ class HuaweiCollector:
 
         start = time.perf_counter()
         try:
-            with Connection(build_url()) as connection:
+            with Connection(build_url(), timeout=ROUTER_TIMEOUT) as connection:
                 client = Client(connection)
                 metrics = list(self._collect_all(client, prefix))
             up.add_metric([], 1.0)
@@ -385,7 +404,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
         try:
-            with Connection(build_url()) as connection:
+            with Connection(build_url(), timeout=ROUTER_TIMEOUT) as connection:
                 client = Client(connection)
                 messages = [sms_to_dict(m) for m in fetch_all_inbox(client)]
         except Exception as exc:  # noqa: BLE001
@@ -401,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_sms_read(self, index: int):
         try:
-            with Connection(build_url()) as connection:
+            with Connection(build_url(), timeout=ROUTER_TIMEOUT) as connection:
                 response = Client(connection).sms.set_read(index)
         except Exception as exc:  # noqa: BLE001
             self._send_json(502, {"error": "router error", "detail": str(exc)})
@@ -410,7 +429,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_sms_delete(self, index: int):
         try:
-            with Connection(build_url()) as connection:
+            with Connection(build_url(), timeout=ROUTER_TIMEOUT) as connection:
                 response = Client(connection).sms.delete_sms(index)
         except Exception as exc:  # noqa: BLE001
             self._send_json(502, {"error": "router error", "detail": str(exc)})

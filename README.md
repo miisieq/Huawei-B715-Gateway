@@ -81,7 +81,14 @@ ROUTER_PASS=twoje_haslo        # hasło do panelu (dla B715 zwykle z naklejki)
 ROUTER_IP=192.168.0.1          # adres routera (wymagane)
 HTTP_PORT=9101                 # opcjonalne, port serwera HTTP
 HTTP_ADDR=0.0.0.0              # opcjonalne, adres nasłuchu
+ROUTER_CONNECT_TIMEOUT=3       # opcjonalne, limit czasu nawiązania połączenia [s, float]
+ROUTER_READ_TIMEOUT=5          # opcjonalne, limit czasu oczekiwania na odpowiedź [s, float]
 ```
+
+> `ROUTER_CONNECT_TIMEOUT`/`ROUTER_READ_TIMEOUT` chronią przed zawieszeniem, gdy router
+> przestaje przyjmować połączenia. Bez nich żądanie wisi do systemowego timeoutu TCP
+> (~2 min), scrape przekracza `scrape_timeout` (10 s), a wiszące połączenia się kumulują.
+> Błędna wartość (nie-liczba lub ≤ 0) kończy start czytelnym błędem.
 
 > `.env` jest w `.gitignore` — nie trafia do repozytorium.
 
@@ -149,6 +156,18 @@ curl -X DELETE "http://localhost:9101/sms/40001"
 | Metryka | Typ | Opis |
 |---------|-----|------|
 | `huawei_lte_up` | gauge | 1 = scrape routera OK, 0 = błąd |
+
+> **Semantyka `up` vs `huawei_lte_up`.** Gdy router nie przyjmuje połączeń, scrape kończy się
+> szybko na `connect` (ok. `ROUTER_CONNECT_TIMEOUT`, poniżej `scrape_timeout` 10 s). Scraper
+> widzi wtedy `up=1` (eksporter odpowiedział HTTP 200) z `huawei_lte_up 0` (router
+> nieosiągalny) — czyli „eksporter działa, routera nie ma". Bez limitu `connect` żądanie
+> wisiałoby do systemowego timeoutu TCP (~2 min), scrape przekroczyłby `scrape_timeout`, a
+> scraper zapisałby `up=0` („eksporter nie działa"), gubiąc to rozróżnienie.
+>
+> Uwaga: `ROUTER_READ_TIMEOUT` działa **per żądanie**, a scrape to kilka kolejnych żądań —
+> router, który przyjmuje połączenie, ale odpowiada bardzo wolno, może mimo limitów przekroczyć
+> `scrape_timeout`. Limity chronią przede wszystkim przed martwym (nieodpowiadającym) routerem.
+
 | `huawei_lte_scrape_duration_seconds` | gauge | Czas scrape'u |
 | `huawei_lte_device_info{device_name,hardware_version,software_version,imei}` | gauge | Info o urządzeniu (wartość 1) |
 | `huawei_lte_operator_info{operator,plmn}` | gauge | Operator sieci (wartość 1) |

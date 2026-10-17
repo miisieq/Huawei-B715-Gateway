@@ -64,6 +64,25 @@ def build_url() -> str:
     return f"http://{USER}:{PASS}@{ROUTER_IP}/"
 
 
+# Limity czasu połączenia z routerem (sekundy, float). connect ~3 s kończy scrape na
+# pierwszym żądaniu, gdy router nie przyjmuje połączeń (z zapasem do 10 s scrape_timeout);
+# przy działającym routerze (scrape ~1–3 s) limit się nie odpala.
+def router_timeout() -> tuple:
+    def _parse(name: str, default: str) -> float:
+        raw = os.environ.get(name, default)
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            raise SystemExit(f"[config] {name} musi być liczbą, jest: {raw!r}")
+        if val <= 0:
+            raise SystemExit(f"[config] {name} musi być > 0, jest: {val}")
+        return val
+    return (_parse("ROUTER_CONNECT_TIMEOUT", "3"), _parse("ROUTER_READ_TIMEOUT", "5"))
+
+
+ROUTER_TIMEOUT = router_timeout()
+
+
 def is_ignored(phone) -> bool:
     """Czy nadawca (numer lub nazwa z pola Phone) jest na liście do zignorowania."""
     return bool(phone) and phone.strip().casefold() in IGNORE_SENDERS
@@ -135,7 +154,7 @@ def main() -> None:
     if missing:
         raise SystemExit("Brak wymaganych zmiennych: " + ", ".join(missing))
 
-    with Connection(build_url()) as connection:
+    with Connection(build_url(), timeout=ROUTER_TIMEOUT) as connection:
         client = Client(connection)
 
         unread = [m for m in fetch_all_inbox(client) if m.get("Smstat") == SMSTAT_UNREAD]
