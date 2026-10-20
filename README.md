@@ -28,6 +28,7 @@ blokada pasm LTE, masowe operacje na SMS-ach oraz przekazywanie SMS-ów do Pusho
 | `mark_all_read.py` | Oznacza wszystkie SMS-y jako przeczytane |
 | `delete_all_smses.py` | Usuwa wszystkie SMS-y (dry-run; kasuje z `--yes`) |
 | `sms_to_pushover.py` | Wysyła nieprzeczytane SMS-y jako powiadomienia Pushover (z timera systemd) |
+| `reboot_router.py` | Restartuje router przez API (z ponawianiem; ręcznie lub z timera systemd) |
 
 > Skrypty w `scripts/` ładują `.env` z katalogu projektu, więc można je uruchamiać z dowolnego miejsca.
 
@@ -46,6 +47,8 @@ cd /srv/huawei-b715-gateway
 ./venv/bin/python scripts/delete_all_smses.py        # dry-run — pokazuje, ile by usunął
 ./venv/bin/python scripts/delete_all_smses.py --yes  # faktyczne usunięcie wszystkich SMS-ów
 ./venv/bin/python scripts/sms_to_pushover.py         # wyślij nieprzeczytane SMS-y do Pushover
+./venv/bin/python scripts/reboot_router.py           # zrestartuj router (z ponawianiem do skutku)
+./venv/bin/python scripts/reboot_router.py --dry-run # test: logowanie + odczyt, BEZ restartu
 ```
 
 Lokalnie działa tak samo (najpierw utwórz venv — patrz [Instalacja](#instalacja)).
@@ -356,6 +359,96 @@ journalctl -u sms-pushover -f                # logi + czas wykonania każdego pr
 ```
 
 `Type=oneshot` nie pozwala nałożyć się dwóm przebiegom (zastępuje `flock`), a `TimeoutStartSec=60` ubija ewentualny zwis (np. gdy router przestanie odpowiadać na żądanie bez timeoutu) — inaczej proces mógłby wisieć w nieskończoność, blokując kolejne uruchomienia. Z flagą `--quiet` skrypt na sukces nie wypisuje nic; bez niej pokazuje podsumowanie (`Wysłano i oznaczono: X; nieudane: Y`). Czas wykonania i exit code każdego przebiegu są w `journalctl -u sms-pushover`.
+
+## Restart routera (`scripts/reboot_router.py`)
+
+Router co ~1,5–2 dni wpada w stan, w którym odrzuca **nowe** połączenia z sieci lokalnej
+(ping, TCP, DNS — także do samego `192.168.8.1`) w rytmie ~5 min przerwy co ~10 min; już
+zestawione połączenia przeżywają. Restart routera usuwa problem, więc skrypt można odpalać
+ręcznie, a profilaktycznie — co noc z timera systemd.
+
+Skrypt loguje się do routera i wysyła restart **typowaną** metodą biblioteki
+(`device.set_control(ControlModeEnum.REBOOT)` = `Control=1`).
+
+> ⚠️ **`Control=2` to RESET FABRYCZNY** (router zgubiłby konfigurację Wi-Fi całej lokalizacji).
+> Skrypt nigdy nie przyjmuje wartości `Control` z zewnątrz i nie woła `post_set('device/control', …)`
+> ręcznie — wysyła wyłącznie `REBOOT`.
+
+**Ponawianie do skutku:** pojedyncza próba zawodzi dokładnie wtedy, gdy restart jest potrzebny
+(router nie przyjmuje nowych połączeń), więc skrypt ponawia próbę co `REBOOT_RETRY_INTERVAL`
+(dom. 20 s) maksymalnie przez `REBOOT_MAX_DURATION` (dom. 900 s). Ponawia przy błędach
+połączenia/timeoutach oraz przejściowych błędach logowania/sesji (zajęta sesja przez bramkę,
+`system busy`, nadmiar logowań, błędy CSRF/tokenu). **Nie** ponawia przy błędnych danych
+logowania — to błąd konfiguracji. Sukces = router odpowiedział `OK`; wtedy kończy natychmiast.
+
+**Kody wyjścia:** `0` = restart wysłany (lub `--dry-run` zakończony powodzeniem);
+`≠0` = porażka (`2` = błędne dane logowania, `1` = wyczerpane próby / inna porażka).
+
+**`--dry-run`** loguje się do routera (z tą samą pętlą ponowień) i czyta `device.information()`,
+ale **nie** restartuje — do bezpiecznego testu konfiguracji i łączności.
+
+Zmienne `.env` (wszystkie opcjonalne; reszta — `ROUTER_*`, `PUSHOVER_*`,
+`ROUTER_CONNECT_TIMEOUT`/`ROUTER_READ_TIMEOUT` — jak w pozostałych narzędziach):
+
+```ini
+REBOOT_RETRY_INTERVAL=20    # odstęp między próbami (s)
+REBOOT_MAX_DURATION=900     # maks. łączny czas ponawiania (s)
+REBOOT_NOTIFY_SUCCESS=1     # 1/0: powiadomienie Pushover o sukcesie (porażkę zgłasza zawsze)
+```
+
+Powiadomienia Pushover używają tych samych `PUSHOVER_TOKEN`/`PUSHOVER_USER` co SMS-y; gdy nie są
+ustawione, skrypt działa normalnie (bez powiadomień). Błąd wysyłki Pushovera nie zmienia kodu wyjścia.
+
+### Restart z timera systemd (oneshot, w nocy)
+
+Dwa pliki — analogicznie do [SMS → Pushover](#powiadomienia-sms--pushover-systemd-timer).
+
+`/etc/systemd/system/huawei-reboot.service`:
+
+```ini
+[Unit]
+Description=Nocny restart routera Huawei B715
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/huawei-b715-gateway
+ExecStart=/srv/huawei-b715-gateway/venv/bin/python scripts/reboot_router.py
+# musi być WIĘKSZE niż REBOOT_MAX_DURATION (dom. 900 s), żeby nie ubić pętli ponowień
+TimeoutStartSec=960
+NoNewPrivileges=true
+```
+
+`/etc/systemd/system/huawei-reboot.timer`:
+
+```ini
+[Unit]
+Description=Uruchamiaj restart routera co noc
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+AccuracySec=1m
+# Persistent=false (domyślne): NIE odrabiaj pominiętego przebiegu. Gdyby host był
+# wyłączony o 04:15, Persistent=true odpaliłby zaległy restart zaraz po starcie hosta —
+# czyli zrestartowałby router w środku dnia. Lepiej pominąć i poczekać do kolejnej nocy.
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+```
+
+Włączenie i podgląd:
+
+```bash
+systemctl enable --now huawei-reboot.timer
+systemctl list-timers huawei-reboot.timer    # kiedy następny / ostatni przebieg
+journalctl -u huawei-reboot -f               # logi + czas wykonania i exit code
+```
+
+`Type=oneshot` nie pozwala nałożyć się dwóm przebiegom, a `TimeoutStartSec=960` (> `REBOOT_MAX_DURATION`)
+daje pętli ponowień dokończyć pracę, zanim systemd ubije proces. Ręczny restart poza timerem:
+`systemctl start huawei-reboot.service` (albo bezpośrednio skryptem — patrz wyżej).
 
 ## Uwagi bezpieczeństwa
 
