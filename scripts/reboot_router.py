@@ -41,6 +41,7 @@ Uruchomienie:
 # dzięki temu `X | None` w adnotacjach działa też na Pythonie 3.9
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import time
@@ -146,10 +147,8 @@ def attempt(dry_run: bool):
         # Po udanym restarcie router już się restartuje — wylogowanie bywa nieudane
         # lub zawisa (do READ_TIMEOUT); ignorujemy błąd close(), żeby udany restart
         # nie wyglądał na porażkę i nie wymuszał kolejnych prób.
-        try:
+        with contextlib.suppress(Exception):
             connection.close()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def main() -> None:
